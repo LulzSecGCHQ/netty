@@ -18,6 +18,7 @@ package io.netty.handler.ssl;
 import java.security.Provider;
 
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIf;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -67,8 +68,6 @@ public class ConscryptJdkSslEngineInteropTest extends SSLEngineTest {
             throws Exception {
     }
 
-    @MethodSource("newTestParams")
-    @ParameterizedTest
     @Override
     protected boolean mySetupMutualAuthServerIsValidServerException(Throwable cause) {
         // TODO(scott): work around for a JDK issue. The exception should be SSLHandshakeException.
@@ -78,5 +77,26 @@ public class ConscryptJdkSslEngineInteropTest extends SSLEngineTest {
     @Override
     protected void invalidateSessionsAndAssert(SSLSessionContext context) {
         // Not supported by conscrypt
+    }
+
+    @MethodSource("newTestParams")
+    @ParameterizedTest
+    @Disabled("Disabled due a conscrypt bug")
+    @Override
+    public void testInvalidSNIIsIgnoredAndNotThrow(SSLEngineTestParam param) throws Exception {
+        super.testInvalidSNIIsIgnoredAndNotThrow(param);
+    }
+
+    @Test
+    @Disabled("Disabled due a conscrypt bug")
+    @Override
+    public void testTLSv13DisabledIfNoValidCipherSuiteConfigured() throws Exception {
+        super.testTLSv13DisabledIfNoValidCipherSuiteConfigured();
+    }
+
+    @Disabled("Disabled due a conscrypt bug")
+    @Override
+    public void mustCallResumeTrustedOnSessionResumption(SSLEngineTestParam param) throws Exception {
+        super.mustCallResumeTrustedOnSessionResumption(param);
     }
 }

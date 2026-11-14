@@ -21,12 +21,19 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 
+import io.netty.channel.unix.Buffer;
+import io.netty.channel.unix.IntegerUnixChannelOption;
+import io.netty.channel.unix.RawUnixChannelOption;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class KQueueChannelConfigTest {
     @BeforeEach
@@ -36,28 +43,28 @@ public class KQueueChannelConfigTest {
 
     @Test
     public void testOptionGetThrowsChannelException() throws Exception {
-        KQueueSocketChannel channel = new KQueueSocketChannel();
+        final KQueueSocketChannel channel = new KQueueSocketChannel();
         channel.config().getSoLinger();
         channel.fd().close();
-        try {
-            channel.config().getSoLinger();
-            fail();
-        } catch (ChannelException e) {
-            // expected
-        }
+        assertThrows(ChannelException.class, new Executable() {
+            @Override
+            public void execute() throws Throwable {
+                channel.config().getSoLinger();
+            }
+        });
     }
 
     @Test
     public void testOptionSetThrowsChannelException() throws Exception {
-        KQueueSocketChannel channel = new KQueueSocketChannel();
+        final KQueueSocketChannel channel = new KQueueSocketChannel();
         channel.config().setKeepAlive(true);
         channel.fd().close();
-        try {
-            channel.config().setKeepAlive(true);
-            fail();
-        } catch (ChannelException e) {
-            // expected
-        }
+        assertThrows(ChannelException.class, new Executable() {
+            @Override
+            public void execute() throws Throwable {
+                channel.config().setKeepAlive(true);
+            }
+        });
     }
 
     // See https://github.com/netty/netty/issues/7159
@@ -76,5 +83,35 @@ public class KQueueChannelConfigTest {
         } finally {
             group.shutdownGracefully();
         }
+    }
+
+    @Test
+    public void testIntegerOption() throws Exception {
+        KQueueSocketChannel channel = new KQueueSocketChannel();
+        IntegerUnixChannelOption opt = new IntegerUnixChannelOption("INT_OPT", 0xffff, 0x0004);
+        Integer zero = 0;
+        assertEquals(zero, channel.config().getOption(opt));
+        channel.config().setOption(opt, 1);
+        assertNotEquals(zero, channel.config().getOption(opt));
+        channel.fd().close();
+    }
+
+    @Test
+    public void testRawOption() throws Exception {
+        KQueueSocketChannel channel = new KQueueSocketChannel();
+        // Value for SOL_SOCKET and SO_REUSEADDR
+        // See https://opensource.apple.com/source/xnu/xnu-201/bsd/sys/socket.h.auto.html
+        RawUnixChannelOption opt = new RawUnixChannelOption("RAW_OPT", 0xffff, 0x0004, 4);
+
+        ByteBuffer disabled = Buffer.allocateDirectWithNativeOrder(4);
+        disabled.putInt(0).flip();
+        assertEquals(disabled, channel.config().getOption(opt));
+
+        ByteBuffer enabled = Buffer.allocateDirectWithNativeOrder(4);
+        enabled.putInt(1).flip();
+
+        channel.config().setOption(opt, enabled);
+        assertNotEquals(disabled, channel.config().getOption(opt));
+        channel.fd().close();
     }
 }

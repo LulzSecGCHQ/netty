@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.eq;
@@ -38,7 +39,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.handler.codec.http2.Http2Stream.State;
 import io.netty.util.concurrent.EventExecutor;
-import junit.framework.AssertionFailedError;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -89,7 +89,13 @@ public class DefaultHttp2LocalFlowControllerTest {
                 }
             });
         } else {
-            when(ctx.flush()).thenThrow(new AssertionFailedError("forbidden"));
+            when(ctx.flush()).then(new Answer<ChannelHandlerContext>() {
+                @Override
+                public ChannelHandlerContext answer(InvocationOnMock invocationOnMock) {
+                    fail("forbidden");
+                    return null;
+                }
+            });
         }
         when(ctx.executor()).thenReturn(executor);
     }
@@ -182,6 +188,24 @@ public class DefaultHttp2LocalFlowControllerTest {
         // stream
         verifyWindowUpdateSent(CONNECTION_STREAM_ID, dataSize);
         verifyWindowUpdateNotSent(STREAM_ID);
+    }
+
+    @Test
+    public void dataFrameOnReservedStreamShouldOnlyApplyConnectionFlowControl() throws Http2Exception {
+        int dataSize = (int) (DEFAULT_WINDOW_SIZE * DEFAULT_WINDOW_UPDATE_RATIO) + 1;
+        Http2Stream reserved = connection.remote().reservePushStream(2, stream(STREAM_ID));
+        assertEquals(State.RESERVED_REMOTE, reserved.state());
+
+        receiveFlowControlledFrame(reserved, dataSize, 0, true);
+        // The bytes are consumed immediately for the connection window.
+        verifyWindowUpdateSent(CONNECTION_STREAM_ID, dataSize);
+        assertEquals(DEFAULT_WINDOW_SIZE, window(CONNECTION_STREAM_ID));
+        assertEquals(0, controller.unconsumedBytes(connection.connectionStream()));
+
+        // Returning the bytes for the reserved stream must not return them to the connection window a second time.
+        assertFalse(controller.consumeBytes(reserved, dataSize));
+        assertEquals(DEFAULT_WINDOW_SIZE, window(CONNECTION_STREAM_ID));
+        verifyWindowUpdateNotSent(2);
     }
 
     @Test

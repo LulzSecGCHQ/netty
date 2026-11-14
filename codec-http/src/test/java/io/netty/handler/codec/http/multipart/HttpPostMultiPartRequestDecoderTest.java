@@ -29,6 +29,7 @@ import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.util.CharsetUtil;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -37,19 +38,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 public class HttpPostMultiPartRequestDecoderTest {
 
     @Test
     public void testDecodeFullHttpRequestWithNoContentTypeHeader() {
-        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
+        final FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
         try {
-            new HttpPostMultipartRequestDecoder(req);
-            fail("Was expecting an ErrorDataDecoderException");
-        } catch (HttpPostRequestDecoder.ErrorDataDecoderException expected) {
-            // expected
+            assertThrows(HttpPostRequestDecoder.ErrorDataDecoderException.class, new Executable() {
+                @Override
+                public void execute() throws Throwable {
+                    new HttpPostMultipartRequestDecoder(req);
+                }
+            });
         } finally {
             assertTrue(req.release());
         }
@@ -57,15 +60,17 @@ public class HttpPostMultiPartRequestDecoderTest {
 
     @Test
     public void testDecodeFullHttpRequestWithInvalidCharset() {
-        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
+        final FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
         req.headers().set(HttpHeaderNames.CONTENT_TYPE,
                 "multipart/form-data; boundary=--89421926422648 [; charset=UTF-8]");
 
         try {
-            new HttpPostMultipartRequestDecoder(req);
-            fail("Was expecting an ErrorDataDecoderException");
-        } catch (HttpPostRequestDecoder.ErrorDataDecoderException expected) {
-            // expected
+            assertThrows(HttpPostRequestDecoder.ErrorDataDecoderException.class, new Executable() {
+                @Override
+                public void execute() throws Throwable {
+                    new HttpPostMultipartRequestDecoder(req);
+                }
+            });
         } finally {
             assertTrue(req.release());
         }
@@ -80,18 +85,64 @@ public class HttpPostMultiPartRequestDecoderTest {
                         "x\n" +
                         "--861fbeab-cd20-470c-9609-d40a0f704466--\n";
 
-        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/upload",
+        final FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/upload",
                 Unpooled.copiedBuffer(content, CharsetUtil.US_ASCII));
         req.headers().set("content-type", "multipart/form-data; boundary=861fbeab-cd20-470c-9609-d40a0f704466");
         req.headers().set("content-length", content.length());
 
         try {
-            new HttpPostMultipartRequestDecoder(req);
-            fail("Was expecting an ErrorDataDecoderException");
-        } catch (HttpPostRequestDecoder.ErrorDataDecoderException expected) {
-            // expected
+            assertThrows(HttpPostRequestDecoder.ErrorDataDecoderException.class, new Executable() {
+                @Override
+                public void execute() throws Throwable {
+                    new HttpPostMultipartRequestDecoder(req);
+                }
+            });
         } finally {
             assertTrue(req.release());
+        }
+    }
+
+    @Test
+    public void decodeMustCleanFilenameCharacters() {
+        String content = "\n--861fbeab-cd20-470c-9609-d40a0f704466\r\n" +
+                "content-disposition: form-data; " +
+                "name=\"file\"; filename=\" dir\\file\0\u007F÷.txt \"\r\n" +
+                "content-type: text/plain\r\n" +
+                "Content-Length: 1\r\n\r\n" +
+                "x\r\n--861fbeab-cd20-470c-9609-d40a0f704466--\r\n";
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/upload",
+                Unpooled.copiedBuffer(content, CharsetUtil.UTF_8));
+        req.headers().set("content-type", "multipart/form-data; boundary=861fbeab-cd20-470c-9609-d40a0f704466");
+        req.headers().set("content-length", content.length());
+
+        HttpPostMultipartRequestDecoder test = new HttpPostMultipartRequestDecoder(req);
+        FileUpload httpData = (FileUpload) test.getBodyHttpDatas("file").get(0);
+        try {
+            assertEquals("dirfile  ÷.txt", httpData.getFilename());
+        } finally {
+            test.destroy();
+        }
+    }
+
+    @Test
+    public void decodeMustCleanFilenamePercentEncodedCharacters() {
+        String content = "\n--861fbeab-cd20-470c-9609-d40a0f704466\r\n" +
+                "content-disposition: form-data; " +
+                "name=\"file\"; filename*=UTF-8''\"%20dir\\file%00%13%7F÷.txt%20\"\r\n" +
+                "content-type: text/plain\r\n" +
+                "Content-Length: 1\r\n\r\n" +
+                "x\r\n--861fbeab-cd20-470c-9609-d40a0f704466--\r\n";
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/upload",
+                Unpooled.copiedBuffer(content, CharsetUtil.UTF_8));
+        req.headers().set("content-type", "multipart/form-data; boundary=861fbeab-cd20-470c-9609-d40a0f704466");
+        req.headers().set("content-length", content.length());
+
+        HttpPostMultipartRequestDecoder test = new HttpPostMultipartRequestDecoder(req);
+        FileUpload httpData = (FileUpload) test.getBodyHttpDatas("file").get(0);
+        try {
+            assertEquals("dirfile   ÷.txt", httpData.getFilename());
+        } finally {
+            test.destroy();
         }
     }
 
@@ -300,6 +351,25 @@ public class HttpPostMultiPartRequestDecoderTest {
         commonNotBadReleaseBuffersDuringDecoding(factory, false);
     }
 
+    @Test
+    public void testDecodeFullHttpRequestWithOptionalParameters() {
+        String content = "\n--861fbeab-cd20-470c-9609-d40a0f704466\r\n" +
+                "content-disposition: form-data; " +
+                "name=\"file\"; filename=\"myfile.ogg\"\r\n" +
+                "content-type: audio/ogg; codecs=opus; charset=UTF8\r\ncontent-transfer-encoding: binary\r\n" +
+                "\r\n\u0001\u0002\u0003\u0004\r\n--861fbeab-cd20-470c-9609-d40a0f704466--\r\n\",\n";
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/upload",
+                Unpooled.copiedBuffer(content, CharsetUtil.US_ASCII));
+        req.headers().set("content-type", "multipart/form-data; boundary=861fbeab-cd20-470c-9609-d40a0f704466");
+        req.headers().set("content-length", content.length());
+
+        HttpPostMultipartRequestDecoder test = new HttpPostMultipartRequestDecoder(req);
+        FileUpload httpData = (FileUpload) test.getBodyHttpDatas("file").get(0);
+        assertEquals("audio/ogg", httpData.getContentType());
+        test.destroy();
+    }
+
     private static void commonNotBadReleaseBuffersDuringDecoding(HttpDataFactory factory, boolean inMemory)
             throws IOException {
         int nbItems = 20;
@@ -361,7 +431,7 @@ public class HttpPostMultiPartRequestDecoderTest {
             assertTrue(Arrays.equals(body, data.get()));
         }
         // To not be done since will load full file on memory: assertEquals(data.get().length, fileSize);
-        // Not mandatory since implicitely called during destroy of decoder
+        // Not mandatory since implicitly called during destroy of decoder
         for (InterfaceHttpData httpData: decoder.getBodyHttpDatas()) {
             httpData.release();
             factory.removeHttpDataFromClean(request, httpData);
